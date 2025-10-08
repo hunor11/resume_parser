@@ -9,7 +9,7 @@ select = ["E","F","I","B","UP"]
 ignore = ["E203","B905"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 strict = true
 ignore_missing_imports = true
 disallow_untyped_decorators = false
