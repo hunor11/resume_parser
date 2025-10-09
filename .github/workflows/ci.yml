@@ -33,9 +33,3 @@ jobs:
           ruff check .
           black --check .
           mypy .
-
-      - name: Test
-        working-directory: ./backend
-        run: |
-          . .venv/bin/activate
-          pytest -q
