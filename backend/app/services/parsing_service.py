@@ -4,7 +4,7 @@ from pathlib import Path
 
 from langchain.schema import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import PyPDFLoader, TextLoader
+from langchain_community.document_loaders import BaseLoader, PyPDFLoader, TextLoader
 
 
 class ParsingService:
@@ -38,6 +38,7 @@ class ParsingService:
     def _load_document(self, file_path: Path) -> list[Document]:
         """Load a single document (PDF or TXT) into LangChain Document objects."""
         ext = file_path.suffix.lower()
+        loader: BaseLoader | None = None
         if ext == ".pdf":
             loader = PyPDFLoader(str(file_path))
         elif ext == ".txt":

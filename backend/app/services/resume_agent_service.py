@@ -8,7 +8,7 @@ import psycopg
 from dotenv import load_dotenv
 from langchain.schema import Document
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.runnables import RunnablePassthrough
+from langchain_core.runnables import Runnable, RunnablePassthrough
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -90,7 +90,7 @@ class ResumeAgent:
             ]
         )
 
-        base_chain = (
+        base_chain: Runnable = (
             {
                 "question": RunnablePassthrough(),
                 "context": itemgetter("question") | self.retriever | _format_docs,

@@ -39,7 +39,7 @@ parser = ParsingService()
 @router.post("/")
 async def upload_files(
     session_id: str = Form(..., min_length=1),
-    files: list[UploadFile] = None,
+    files: list[UploadFile] | None = None,
 ):
     """
     Upload TXT/PDF files, parse+chunk, and index them into PGVector with metadata
