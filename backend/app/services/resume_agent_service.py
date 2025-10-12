@@ -4,15 +4,15 @@ from __future__ import annotations
 import os
 from operator import itemgetter
 
+import psycopg
 from dotenv import load_dotenv
 from langchain.schema import Document
-from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_postgres import PGVector
+from langchain_postgres import PGVector, PostgresChatMessageHistory
 
 
 def _format_docs(docs: list[Document]) -> str:
@@ -36,33 +36,41 @@ class ResumeAgent:
 
     def __init__(
         self,
-        collection_name: str = "resumes",
         k: int = 5,
+        session_id: str = "default",
     ) -> None:
         """
-        Args:
-            - collection_name: pgvector collection (table) name
-            - k: number of context docs to retrieve per query
+        Initialize the ResumeAgent.
 
-        Note: requires VECTOR_DB_URL and GEMINI_API_KEY in env.
+        Args:
+            - k: number of context documents to retrieve
+            - session_id: identifier for chat session (memory)
         """
         load_dotenv()
         conn = os.environ["VECTOR_DB_URL"]
         if conn.startswith("postgres://"):  # aiven gives this URL format :(
             conn = conn.replace("postgres://", "postgresql+psycopg://", 1)
 
-        self.emb = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+        embedding_model = (
+            os.environ.get("EMBEDDING_MODEL") or "sentence-transformers/all-MiniLM-L6-v2"
+        )
+        collection_name = os.environ.get("RESUME_COLLECTION") or "resumes"
+        self.emb = HuggingFaceEmbeddings(model_name=embedding_model)
 
         self.vs = PGVector(
             connection=conn,
             collection_name=collection_name,
             embeddings=self.emb,
         )
-        self.retriever = self.vs.as_retriever(search_kwargs={"k": k})
+        self.k = k
+        self.session_id = session_id
+
+        kwargs = {"k": self.k or 5, "filter": {"session_id": {"$eq": session_id}}}
+        self.retriever = self.vs.as_retriever(search_kwargs=kwargs)
 
         self.llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash",
-            temperature=0.2,  # set a low temperature for more factual responses
+            temperature=0.2,
         )
 
         self.prompt = ChatPromptTemplate.from_messages(
@@ -92,16 +100,22 @@ class ResumeAgent:
             | self.llm
         )
 
-        self._store: dict[str, ChatMessageHistory] = {}
+        self._sync_connection = psycopg.connect(conn)
+        self.chat_table_name = os.environ["CHAT_TABLE_NAME"] or "message_store"
+        PostgresChatMessageHistory.create_tables(self._sync_connection, self.chat_table_name)
 
-        def _get_session_history(session_id: str) -> ChatMessageHistory:
-            if session_id not in self._store:
-                self._store[session_id] = ChatMessageHistory()
-            return self._store[session_id]
+        # Define the history getter (uses the same DB connection)
+        def get_session_history(session_id: str) -> PostgresChatMessageHistory:
+            return PostgresChatMessageHistory(
+                self.chat_table_name,
+                session_id,
+                sync_connection=self._sync_connection,
+                # create_table=True,
+            )
 
         self.chain = RunnableWithMessageHistory(
             base_chain,
-            _get_session_history,
+            get_session_history,  # Pass the function here
             input_messages_key="question",
             history_messages_key="history",
         )
@@ -130,18 +144,37 @@ class ResumeAgent:
             - question: user question string
             - session_id: identifier for chat session (memory)
             - k: optional override for number of context docs to retrieve
+
+        Returns:
+            - str: answer string from the LLM
         """
         # Allow per-call k (adjust retriever on the fly)
+        if k is None:
+            k = self.k
         if k is not None:
-            self.retriever = self.vs.as_retriever(search_kwargs={"k": k})
+            self.retriever = self.vs.as_retriever(
+                search_kwargs={"k": k, "filter": {"session_id": {"$eq": self.session_id}}}
+            )
 
         resp = self.chain.invoke(
             {"question": question},
             config={"configurable": {"session_id": session_id}},
         )
-        # resp is a ChatMessage; return text content
+
         return getattr(resp, "content", str(resp))
 
-    def reset_session(self, session_id: str = "default") -> None:
-        """Clear the conversation history for a given session_id."""
-        self._store.pop(session_id, None)
+    def set_session_filter(self, session_id: str):
+        """
+        Set the session_id filter for the retriever (for context docs).
+
+        Args:
+            - session_id: identifier for chat session (memory)
+        """
+        kwargs = {"k": self.k or 5, "filter": {"session_id": {"$eq": session_id}}}
+        self.retriever = self.vs.as_retriever(search_kwargs=kwargs)
+
+    def close(self):
+        """Close any open resources, e.g., DB connections."""
+        if self._sync_connection:
+            self._sync_connection.close()
+            self._sync_connection = None
