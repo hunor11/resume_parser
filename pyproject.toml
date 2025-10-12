@@ -8,6 +8,10 @@ target-version = "py311"
 select = ["E","F","I","B","UP"]
 ignore = ["E203","B905"]
 
+[tool.pylint]
+max-line-length = 100
+fail-under = 8.5
+
 # [tool.pyright]
 # include = ["backend/.venv"]
 # exclude = [".git"]

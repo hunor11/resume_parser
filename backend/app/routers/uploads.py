@@ -57,6 +57,9 @@ async def upload_files(
     sess_dir.mkdir(parents=True, exist_ok=True)
 
     for f in files:
+        if not f.filename:
+            raise HTTPException(status_code=400, detail="File missing filename.")
+
         suffix = Path(f.filename).suffix.lower()
         if suffix not in {".txt", ".pdf"}:
             raise HTTPException(status_code=415, detail=f"Unsupported type: {suffix}")
